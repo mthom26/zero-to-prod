@@ -1,9 +1,9 @@
-use axum::{response::Html, routing::get, Router};
+use axum::{http::StatusCode, routing::get, Router};
 use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new().route("/", get(handler));
+    let app = Router::new().route("/health-check", get(health_check));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
     println!("listening on {}", addr);
@@ -13,6 +13,6 @@ async fn main() {
         .unwrap();
 }
 
-async fn handler() -> Html<&'static str> {
-    Html("<h1>Hello, World!</h1>")
+async fn health_check() -> StatusCode {
+    StatusCode::OK
 }

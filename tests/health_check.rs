@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
-use zero_to_prod::app;
+use sqlx::{Connection, PgConnection};
+use zero_to_prod::{config::get_config, startup::app};
 
 #[tokio::test]
 async fn health_check_works() {
@@ -22,6 +23,12 @@ async fn health_check_works() {
 async fn subscribe_returns_200_for_valid_form_data() {
     let server_addr = serve();
     let addr = format!("http://{}/subscriptions", server_addr);
+    let config = get_config().expect("Failed to read configuration.");
+    let conn_string = config.database.connection_string();
+
+    let _conn = PgConnection::connect(&conn_string)
+        .await
+        .expect("Could not connect to Postgres.");
 
     let body = "name=jimmy%20derp&email=jimderp%40derpmail.com";
     let client = reqwest::Client::new();
@@ -59,7 +66,7 @@ async fn subscribe_returns_400_for_invalid_form_data() {
 
         assert_eq!(
             response.status(),
-            400,
+            422, // Axum responds with a 422 here
             "The API did not fail when {}",
             error
         )

@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
 
-use zero_to_prod::app;
+use zero_to_prod::{config::get_config, startup::app};
 
 #[tokio::main]
 async fn main() {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
-
+    let config = get_config().expect("Failed to read configuration.");
+    let addr = SocketAddr::from(([127, 0, 0, 1], config.application_port));
     let app = app();
 
     println!("listening on {}", addr);

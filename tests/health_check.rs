@@ -1,9 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
-use sqlx::{
-    postgres::PgPoolOptions,
-    Connection, PgConnection,
-};
+use sqlx::{postgres::PgPoolOptions, Connection, Executor, PgConnection};
+use uuid::Uuid;
 
 use zero_to_prod::{
     config::{get_config, Settings},
@@ -12,7 +10,7 @@ use zero_to_prod::{
 
 #[tokio::test]
 async fn health_check_works() {
-    let (server_addr, _config) = serve().await;
+    let (server_addr, _config) = spawn_app().await;
     let addr = format!("http://{}/health-check", server_addr);
 
     let client = reqwest::Client::new();
@@ -28,7 +26,7 @@ async fn health_check_works() {
 
 #[tokio::test]
 async fn subscribe_returns_200_for_valid_form_data() {
-    let (server_addr, config) = serve().await;
+    let (server_addr, config) = spawn_app().await;
     let addr = format!("http://{}/subscriptions", server_addr);
     let conn_string = config.database.connection_string();
 
@@ -58,7 +56,7 @@ async fn subscribe_returns_200_for_valid_form_data() {
 
 #[tokio::test]
 async fn subscribe_returns_400_for_invalid_form_data() {
-    let (server_addr, _config) = serve().await;
+    let (server_addr, _config) = spawn_app().await;
     let addr = format!("http://{}/subscriptions", server_addr);
 
     let test_bodies = [
@@ -86,10 +84,22 @@ async fn subscribe_returns_400_for_invalid_form_data() {
     }
 }
 
-async fn serve() -> (SocketAddr, Settings) {
+async fn spawn_app() -> (SocketAddr, Settings) {
     let addr = SocketAddr::from(([127, 0, 0, 1], 0));
 
-    let config = get_config().expect("Failed to read configuration.");
+    let db_name = Uuid::new_v4().to_string();
+
+    let mut config = get_config().expect("Failed to read configuration.");
+    config.database.database_name = db_name;
+
+    let mut conn = PgConnection::connect(&config.database.connection_string_no_db())
+        .await
+        .expect("Could not connect to Postgres.");
+
+    let query = format!("CREATE DATABASE \"{}\";", config.database.database_name);
+    conn.execute(query.as_str())
+        .await
+        .expect("Could not create database.");
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -97,6 +107,11 @@ async fn serve() -> (SocketAddr, Settings) {
         .connect(&config.database.connection_string())
         .await
         .expect("Could not connect to database.");
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Could not migrate database.");
 
     let app = app(pool);
 

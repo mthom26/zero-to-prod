@@ -1,11 +1,18 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
-use sqlx::{Connection, PgConnection};
-use zero_to_prod::{config::get_config, startup::app};
+use sqlx::{
+    postgres::PgPoolOptions,
+    Connection, PgConnection,
+};
+
+use zero_to_prod::{
+    config::{get_config, Settings},
+    startup::app,
+};
 
 #[tokio::test]
 async fn health_check_works() {
-    let server_addr = serve();
+    let (server_addr, _config) = serve().await;
     let addr = format!("http://{}/health-check", server_addr);
 
     let client = reqwest::Client::new();
@@ -21,12 +28,11 @@ async fn health_check_works() {
 
 #[tokio::test]
 async fn subscribe_returns_200_for_valid_form_data() {
-    let server_addr = serve();
+    let (server_addr, config) = serve().await;
     let addr = format!("http://{}/subscriptions", server_addr);
-    let config = get_config().expect("Failed to read configuration.");
     let conn_string = config.database.connection_string();
 
-    let _conn = PgConnection::connect(&conn_string)
+    let mut conn = PgConnection::connect(&conn_string)
         .await
         .expect("Could not connect to Postgres.");
 
@@ -40,12 +46,19 @@ async fn subscribe_returns_200_for_valid_form_data() {
         .await
         .expect("Could not execute request.");
 
+    let saved = sqlx::query!("SELECT email, name FROM subscriptions")
+        .fetch_one(&mut conn)
+        .await
+        .expect("Could not fetch saved subscription.");
+
     assert_eq!(response.status(), 200);
+    assert_eq!(saved.email, "jimderp@derpmail.com");
+    assert_eq!(saved.name, "jimmy derp");
 }
 
 #[tokio::test]
 async fn subscribe_returns_400_for_invalid_form_data() {
-    let server_addr = serve();
+    let (server_addr, _config) = serve().await;
     let addr = format!("http://{}/subscriptions", server_addr);
 
     let test_bodies = [
@@ -73,13 +86,23 @@ async fn subscribe_returns_400_for_invalid_form_data() {
     }
 }
 
-fn serve() -> SocketAddr {
+async fn serve() -> (SocketAddr, Settings) {
     let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-    let app = app();
+
+    let config = get_config().expect("Failed to read configuration.");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect_timeout(Duration::from_secs(3))
+        .connect(&config.database.connection_string())
+        .await
+        .expect("Could not connect to database.");
+
+    let app = app(pool);
 
     let server = axum::Server::bind(&addr).serve(app.into_make_service());
     let local_addr = server.local_addr();
     tokio::spawn(async move { server.await });
 
-    local_addr
+    (local_addr, config)
 }
